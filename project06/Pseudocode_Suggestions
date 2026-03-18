@@ -1,0 +1,193 @@
+1. Read FASTA
+Return an (ordered?) dictionary mapping sequence ids to sequences
+Notes: Python dicts already preserve order, the dataset is small enough to
+be handled by a regular dict, ordered dict adds overhead not needed for this
+project so we will just use regular dict. seqs = {}
+
+def read_fasta(filename):
+
+    initialize empty dictionary seqs
+    set current_id = None
+    set current_seq = empty list
+
+    open filename for reading as file:
+
+        for each line in file:
+            strip whitespace from line
+
+            if line starts with ">":
+                if current_id is not None:
+                    seqs[current_id] = concatenate all strings in current_seq
+
+                current_id = substring of line starting at index 1
+                current_seq = empty list
+
+            else:
+                append line to current_seq
+
+    after finishing all lines:
+        if current_id is not None:
+            seqs[current_id] = concatenate all strings in current_seq
+
+    return seqs
+
+2. Smith-Waterman local dynamic programming implementation
+to attain a max similarity score that will later be converted into
+distance. Similarity and distance are linked through a monotonic
+transformation: high similarity must become small distance, and low
+similarity must become large distance, because Neighbor‑Joining requires
+a distance matrix, not similarity matrix.
+Notes: We ONLY need the max score, no need for traceback or creating
+alignments.
+similarity(i,j) = max SW score
+distance(i,j) = max_similarity − similarity(i,j)
+
+def smith_waterman(
+                    sequence1,
+                    sequence2,
+                    match_score,
+                    mismatch_penalty,
+                    gap_penalty
+                    ):
+
+    let m = length of sequence1
+    let n = length of sequence2
+
+    create matrix H with (m+1) rows and (n+1) columns
+    fill entire matrix H with zeros (internal zeros overwritten as needed)
+
+    set max_score = 0
+
+    for i from 1 to m:
+        for j from 1 to n:
+
+            if sequence1[i-1] == sequence2[j-1]:
+                diag = H[i-1][j-1] + match_score
+            else:
+                diag = H[i-1][j-1] + mismatch_penalty
+
+            delete = H[i-1][j] + gap_penalty
+            insert = H[i][j-1] + gap_penalty
+
+            H[i][j] = maximum of (0, diag, delete, insert)
+
+            if H[i][j] > max_score:
+                max_score = H[i][j]
+
+    return max_score
+
+3. Build Distance Matrix:
+This function must:
+    a. iterate over each pair of sequences
+    b. Compute smith-waterman similarity score
+    c. Find max similarity across pairs
+    d. Converts similarity → distance using
+        distance (𝑖,𝑗) = max_similarity − similarity (𝑖,𝑗)
+This produces the distance matrix that Neighbor‑Joining requires
+
+
+def build_distance_matrix(seqs):
+
+    ids = list of keys in seqs
+    n = number of sequences
+
+    create similarity matrix S of size n x n filled with 0
+
+    for i from 0 to n-1:
+        for j from i+1 to n-1:
+            score = smith_waterman(seqs[ids[i]], seqs[ids[j]])
+            S[i][j] = score
+            S[j][i] = score
+
+    max_sim = maximum value in S (excluding diagonal)
+
+    create distance matrix D of size n x n
+
+    for i from 0 to n-1:
+        for j from 0 to n-1:
+            if i == j:
+                D[i][j] = 0
+            else:
+                D[i][j] = max_sim - S[i][j]
+
+    return D, ids
+
+
+4. Neighbor Joining function
+That is the final major algorithm you needed before plotting the tree.
+Neighbor‑Joining consumes the distance matrix just built and produces
+the unrooted phylogenetic tree. This is the most complex part of the
+project.
+Neighbor‑Joining (NJ) takes a distance matrix and repeatedly:
+    - computes the Q‑matrix to adjust distances for unequal evolutionary rates
+    - finds the pair of taxa with the minimum Q(i,j)
+    - joins them into a new internal node
+    - computes branch lengths for each
+    - updates the distance matrix by replacing the pair with the new
+      node
+    - repeats until only two nodes remain
+    - outputs a Newick string representing the unrooted tree
+NJ is not hierarchical clustering. It is a minimum‑evolution algorithm
+that corrects for rate variation using the Q‑matrix:
+    𝑄(𝑖,𝑗) = (𝑛−2)𝑑(𝑖,𝑗)−𝑟𝑖−𝑟𝑗
+where:
+        𝑟𝑖 = ∑𝑘=1,𝑛  𝑑(𝑖,𝑘)
+This ensures that the pair chosen minimizes total tree length.
+Requires helper function to store edges and to convert tree dict to Newick
+
+def neighbor_joining(distance_matrix, labels):
+
+    let D = distance_matrix
+    let L = labels
+    let n = number of taxa
+
+    create empty structure T to store tree edges
+
+    while n > 2:
+
+        for each taxon i:
+            compute r[i] = sum of D[i][k] over all k
+
+        create Q-matrix of size n x n
+        for each pair (i,j), i != j:
+            Q[i][j] = (n - 2) * D[i][j] - r[i] - r[j]
+
+        find pair (i,j) with minimum Q[i][j]
+
+        compute delta = (r[i] - r[j]) / (n - 2)
+
+        compute limb length for i:
+            limb_i = (D[i][j] + delta) / 2
+
+        compute limb length for j:
+            limb_j = D[i][j] - limb_i
+
+        create new internal node u with unique label
+
+Helper funtion:
+        record edge (u, L[i]) with length limb_i in T
+        record edge (u, L[j]) with length limb_j in T
+
+        create new row/column for u in D
+        for each taxon k not equal to i or j:
+            D[u][k] = (D[i][k] + D[j][k] - D[i][j]) / 2
+            D[k][u] = D[u][k]
+
+        remove rows/columns i and j from D
+        remove labels L[i] and L[j] from L
+
+        append label u to L
+
+        update n = n - 1
+
+    let remaining taxa be a and b
+
+    record final edge (a, b) with length D[a][b] in T
+
+Helper function:
+    convert T into Newick format string
+
+    return Newick string
+
+
+
